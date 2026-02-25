@@ -1,0 +1,18 @@
+# Directory Configuration File
+# Format: KEY=VALUE
+# Lines starting with # are comments
+
+# Data directories
+DATA_HLS_COMPOSITES=/projectnb/hlsfm/applications/lsp/outputs/HLS_composites_HP-LSP
+DATA_LSP_ANCILLARY=/projectnb/hlsfm/applications/lsp/ancillary/HP_LSP
+DATA_GEOJSON=/projectnb/hlsfm/applications/lsp/ancillary/HP_LSP/geotiff_extents.geojson
+
+# Cache and output directories
+MEAN_STDS_DIR=data/mean_stds
+DATA_PATHS_DIR=data/data_paths
+CHECKPOINT_ROOT=data/checkpoints
+PIXELS_CACHE_DIR=data/pixels_cache
+
+# Model weights
+MODEL_WEIGHTS_300M=/usr4/cs505/mqraitem/ivc-ml/geo/data/Prithvi_EO_V2_300M.pt
+MODEL_WEIGHTS_600M=/usr4/cs505/mqraitem/ivc-ml/geo/data/Prithvi_EO_V2_600M.pt
