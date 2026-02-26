@@ -447,6 +447,55 @@ def convex_ensemble(
     return weights
 
 
+def simple_ensemble(
+    method_names: List[str],
+    results_val: Dict[str, pd.DataFrame],
+    results_test: Dict[str, pd.DataFrame],
+    out_name: str,
+    min_rows: int = 20,
+    verbose: bool = True,
+) -> Dict[str, np.ndarray]:
+    """Learn a single global set of convex weights on val, apply to test.
+
+    Unlike convex_ensemble, this does NOT split by region — it fits one
+    weight vector per prediction column across the entire validation set.
+
+    Returns: {pred_col: weights_array}
+    """
+    dfs_val = [results_val[f"{m}_val"] for m in method_names]
+    dfs_test = [results_test[f"{m}_test"] for m in method_names]
+
+    n_models = len(dfs_val)
+    uniform = np.full(n_models, 1.0 / n_models)
+    pred_cols = [c for c in dfs_val[0].columns if '_pred_' in c]
+
+    # Fit global weights on val
+    weights = {}
+    for col in pred_cols:
+        X = np.column_stack([df[col].values for df in dfs_val])
+        y = dfs_val[0][col.replace('_pred_', '_truth_')].values
+        valid = np.isfinite(X).all(axis=1) & np.isfinite(y)
+        if valid.sum() < min_rows:
+            weights[col] = uniform.copy()
+        else:
+            weights[col] = _fit_convex_weights(X[valid], y[valid])
+
+    if verbose:
+        print(f"Simple ensemble weights ({out_name}):")
+        for col, w in weights.items():
+            w_str = "  ".join(f"{method_names[i]}: {w[i]:.3f}" for i in range(n_models))
+            print(f"  {col}: {w_str}")
+
+    # Apply global weights to test
+    df_out = dfs_test[0].copy()
+    for col in pred_cols:
+        X = np.column_stack([df[col].values for df in dfs_test])
+        df_out[col] = X @ weights[col]
+
+    results_test[out_name] = df_out
+    return weights
+
+
 ################################################################################################################################################
 # Oracle Ensemble — upper bound that fits optimal convex weights on the test set itself
 ################################################################################################################################################
@@ -585,16 +634,17 @@ def results_file(split="test", selected_months=[3,6,9,12]):
 	return results, results_w_regions
 
 
-def get_mae(df, tile, siteid, results, method):
-    df_tile = df[(df["HLStile"] == tile) & (df["SiteID"] == siteid)]
-    for date in ["G", "M", "S", "D"]: 
+def get_mae(df, tile, siteid, year, results, method):
+    df_tile = df[(df["HLStile"] == tile) & (df["SiteID"] == siteid) & (df["years"] == year)]
+    for date in ["G", "M", "S", "D"]:
         mae = np.mean(np.abs(df_tile[f"{date}_pred_DOY"] - df_tile[f"{date}_truth_DOY"]))
         results["HLStile"].append(tile)
         results["Date"].append(date)
         results["MAE"].append(mae)
         results["SiteID"].append(siteid)
+        results["years"].append(year)
         results["Method"].append(method)
-    return results 
+    return results
 
 
 def plot_qual(results_w_regions, methods = ["prithvi_pretrained_1.0_test", "Transformer-LSP_test"], methods_plot_names = ["Prithvi", "1D Shallow \n Transformer"], random_seed=120): 
@@ -729,7 +779,7 @@ def plot_performance_tiles(results_mae_df, methods= ["prithvi_pretrained_1.0_tes
     results_mae_bar["Hlstile_SiteID"] = results_mae_bar["HLStile"] + "\n" + results_mae_bar["SiteID"]
 
     #fig with 4 subplots vertical 
-    fig, axs = plt.subplots(4, 1, figsize=(16, 12))
+    fig, axs = plt.subplots(4, 1, figsize=(20, 12))
     for idx, date in enumerate(["G", "M", "S", "D"]):
         results_plot_date = results_mae_bar[results_mae_bar["Date"] == date]
         sns.barplot(data=results_plot_date, x="Hlstile_SiteID", y="MAE", hue="Method", palette="Set2", ax=axs[idx])

@@ -20,14 +20,14 @@ loss = "mse"
 epochs = 150
 n_layers = 4
 load_checkpoint = True
-crop_size = 48
-epoch_length = 5000
 grad_accum_steps = 1
 data_percentage = 1.0
+crop_size = 48
+epoch_length = 5000
 
 # ===== Shared sweep grid =====
-learning_rates = [0.0005, 0.001]
-backbone_lr_scales = [1.0, 0.1, 0.5]
+learning_rates = [0.0001, 0.001]
+backbone_lr_scales = [1.0]
 batch_sizes = [16, 32]
 
 
@@ -41,10 +41,14 @@ def is_done(record_path):
     return "wandb: Find logs" in file_content[-1]
 
 
+
 ###############################################################
 # * Prithvi Pretrained Conv3d Random Crops 
 ###############################################################
 group_name = "prithvi_pretrained_crops_conv3d"
+crop_size = 224
+epoch_length = 230
+batch_sizes = [1, 2]
 for learning_rate in learning_rates:
     for backbone_lr_scale in backbone_lr_scales:
         for batch_size in batch_sizes:
@@ -76,7 +80,7 @@ for learning_rate in learning_rates:
                        f" --learning_rate {learning_rate}'"
                        f" -o {records_dir}/{name}"
                        f" run_scripts/train_prithvi_conv3d_crops.sh")
-            # os.system(command)
+            os.system(command)
 
 ###############################################################
 # * Prithvi Pretrained Multi-Scale Conv3d Random Crops 
@@ -166,7 +170,7 @@ for progressive_fusion in [False, True]:
 
 
 # ===== Shared sweep grid =====
-learning_rates = [0.0005, 0.001]
+learning_rates = [0.0001]
 backbone_lr_scales = [1.0]
 batch_sizes = [16, 32]
 
@@ -213,4 +217,4 @@ for progressive_fusion in [False]:
                            f" --learning_rate {learning_rate}'"
                            f" -o {records_dir}/{name}"
                            f" run_scripts/train_prithvi_conv3d_crops_cathls.sh")
-                os.system(command)
+                # os.system(command)

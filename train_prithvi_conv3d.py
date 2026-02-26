@@ -160,7 +160,7 @@ def main():
 			layer_decay=args.layer_decay,
 		)
 	else:
-		param_groups = [{'params': model.parameters(), 'lr': head_lr, 'name': 'all'}]
+		param_groups = [{'params': list(model.parameters()), 'lr': head_lr, 'name': 'all'}]
 
 	# Print LR schedule summary
 	print(f"\nLayer-wise LR schedule (decay={args.layer_decay}):")

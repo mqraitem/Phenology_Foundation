@@ -386,7 +386,7 @@ def eval_data_loader(data_loader,model, device, tiles_paper_masks, loss_fn=None)
 
 
 def eval_data_loader_crops(data_loader, model, device, tiles_paper_masks,
-						   crop_size=48, stride=48, loss_fn=None):
+						   crop_size=48, stride=None, loss_fn=None):
 	"""Evaluate using sliding-window crops.
 
 	For each tile, slide a crop_size x crop_size window with the given stride.
@@ -399,9 +399,12 @@ def eval_data_loader_crops(data_loader, model, device, tiles_paper_masks,
 		device:      "cuda"
 		tiles_paper_masks: dict of per-tile evaluation masks
 		crop_size:   spatial size the model expects (default 48)
-		stride:      sliding window stride (default 48 = non-overlapping)
+		stride:      sliding window stride (default: crop_size = non-overlapping)
 		loss_fn:     loss function for eval loss computation
 	"""
+	if stride is None:
+		stride = crop_size
+
 	if loss_fn is None:
 		loss_fn = segmentation_loss
 
@@ -474,12 +477,15 @@ def eval_data_loader_crops(data_loader, model, device, tiles_paper_masks,
 
 
 def eval_data_loader_crops_df(data_loader, model, device, tiles_paper_masks,
-							  crop_size=48, stride=48):
+							  crop_size=48, stride=None):
 	"""Evaluate using sliding-window crops and return per-pixel DataFrame.
 
 	Same sliding-window logic as eval_data_loader_crops, but outputs a DataFrame
 	with per-pixel predictions (matching eval_data_loader_df output format).
 	"""
+	if stride is None:
+		stride = crop_size
+
 	model.eval()
 	tile_size = 330
 

@@ -124,10 +124,6 @@ def main():
 	parser.add_argument("--grad_accum_steps", type=int, default=1,
 	                   help="Gradient accumulation steps. Effective batch = batch_size * this")
 
-	# Eval sliding window
-	parser.add_argument("--eval_stride", type=int, default=48,
-	                   help="Stride for sliding window eval (48=non-overlapping, 24=2x overlap)")
-
 	# Layer-wise LR decay and cosine schedule
 	parser.add_argument("--layer_decay", type=float, default=0.75,
 	                   help="Layer-wise LR decay factor (0-1)")
@@ -177,7 +173,6 @@ def main():
 		"optimizer": args.optimizer,
 		"grad_accum_steps": args.grad_accum_steps,
 		"effective_batch_size": args.batch_size * args.grad_accum_steps,
-		"eval_stride": args.eval_stride,
 		"layer_decay": args.layer_decay,
 		"warmup_epochs": args.warmup_epochs,
 		"min_lr": args.min_lr,
@@ -264,7 +259,7 @@ def main():
 			layer_decay=args.layer_decay,
 		)
 	else:
-		param_groups = [{'params': model.parameters(), 'lr': head_lr, 'name': 'all'}]
+		param_groups = [{'params': list(model.parameters()), 'lr': head_lr, 'name': 'all'}]
 
 	# Print LR schedule summary
 	print(f"\nLayer-wise LR schedule (decay={args.layer_decay}):")
@@ -353,10 +348,10 @@ def main():
 		# Validation Phase (sliding window, crop_size x crop_size crops over full tiles)
 		acc_dataset_val, _, epoch_loss_val = eval_data_loader_crops(
 			val_dataloader, model, device, get_masks_paper("train"),
-			crop_size=args.crop_size, stride=args.eval_stride, loss_fn=loss_fn)
+			crop_size=args.crop_size, loss_fn=loss_fn)
 		acc_dataset_test, _, epoch_loss_test = eval_data_loader_crops(
 			test_dataloader, model, device, get_masks_paper("test"),
-			crop_size=args.crop_size, stride=args.eval_stride, loss_fn=loss_fn)
+			crop_size=args.crop_size, loss_fn=loss_fn)
 
 		if args.logging:
 			to_log = {}
@@ -391,10 +386,10 @@ def main():
 
 	acc_dataset_val, _, epoch_loss_val = eval_data_loader_crops(
 		val_dataloader, model, device, get_masks_paper("train"),
-		crop_size=args.crop_size, stride=args.eval_stride, loss_fn=loss_fn)
+		crop_size=args.crop_size, loss_fn=loss_fn)
 	acc_dataset_test, _, _ = eval_data_loader_crops(
 		test_dataloader, model, device, get_masks_paper("test"),
-		crop_size=args.crop_size, stride=args.eval_stride, loss_fn=loss_fn)
+		crop_size=args.crop_size, loss_fn=loss_fn)
 
 	if args.logging:
 		for idx in range(4):

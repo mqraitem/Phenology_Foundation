@@ -13,8 +13,10 @@ epochs = 150
 data_percentage = 1.0
 
 # ===== Sweep grid =====
-learning_rates = [0.0001, 0.00005, 0.00001]
-batch_sizes = [512, 1024]
+# learning_rates = [0.0001, 0.00005, 0.00001]
+learning_rates = [0.0001, 0.00001]
+# batch_sizes = [512, 1024]
+batch_sizes = [10000, 50000, 100000, 200000]
 
 
 def is_done(record_path):
