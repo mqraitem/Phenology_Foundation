@@ -19,3 +19,9 @@ __pycache__/
 
 # Logs
 *.log
+
+Project.md
+
+.claude
+
+figures/

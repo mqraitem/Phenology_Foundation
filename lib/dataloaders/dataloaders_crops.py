@@ -133,11 +133,17 @@ class CycleDatasetCrops(Dataset):
 				self.correct_indices, :self.tile_size, :self.tile_size]
 			gt = self._process_gt(gt)
 
-			non_zero_mask = np.any(img != 0, axis=(0, 1))  # (H, W)
+			# Per-timestep dead mask: True where all 6 bands are 0  →  (T, H, W)
+			dead_ts_mask = (img == 0).all(axis=0)
+
 			img_norm = (img.astype(np.float32) - means) / (stds + 1e-6)
 			img_norm = np.where(
-				non_zero_mask[np.newaxis, np.newaxis, :, :], img_norm, 0.0
+				dead_ts_mask[np.newaxis, :, :, :], 0.0, img_norm
 			).astype(np.float32)
+
+			# GT: only mask pixels dead across ALL timesteps
+			fully_dead_mask = dead_ts_mask.all(axis=0)  # (H, W)
+			gt[:, fully_dead_mask] = -1
 
 			all_images.append(img_norm)
 			all_gts.append(gt)

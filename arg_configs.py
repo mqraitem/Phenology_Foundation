@@ -31,7 +31,9 @@ def get_core_parser():
     parser.add_argument("--group_name", type=str, default="default",
                        help="Group name for wandb logging")
     parser.add_argument("--wandb_name", type=str, default="default",
-                       help="Group name for wandb logging")
+                       help="Run name for wandb logging")
+    parser.add_argument("--wandb_project", type=str, default=None,
+                       help="Project name for wandb logging (default: phenology_crop_{data_percentage})")
     parser.add_argument("--batch_size", type=int, default=2,
                        help="Batch size for training")
     parser.add_argument("--data_percentage", type=float, default=1.0,
@@ -41,7 +43,7 @@ def get_core_parser():
     parser.add_argument("--n_epochs", type=int, default=120,
                        help="Number of training epochs")
     parser.add_argument("--selected_months", type=int, nargs='+',
-                       default=[3,6,9,12],
+                       default=[3, 4, 5, 6, 7, 8, 9, 10],
                        help="Which months to include (e.g., --selected_months 3 6 9 12)")
 
     return parser

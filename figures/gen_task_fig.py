@@ -13,7 +13,7 @@ import os
 
 # --- Config ---
 HLS_DIR = "/projectnb/hlsfm/applications/lsp/outputs/HLS_composites_HP-LSP"
-CSV = "results/m3-6-9-12/prithvi_pretrained_multiscale_crops_conv3d_1.0_test.csv"
+CSV = "results/m3-6-9-12/prithvi_pretrained_multiscale_crops_conv3d_crop48_1.0_test.csv"
 OUT_DIR = "figures"
 SITE, TILE, YEAR = "NH-2", "T18TYP", 2019
 BANDS = ["G", "M", "S", "D"]

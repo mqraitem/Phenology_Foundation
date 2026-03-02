@@ -16,3 +16,7 @@ PIXELS_CACHE_DIR=data/pixels_cache
 # Model weights
 MODEL_WEIGHTS_300M=/usr4/cs505/mqraitem/ivc-ml/geo/data/Prithvi_EO_V2_300M.pt
 MODEL_WEIGHTS_600M=/usr4/cs505/mqraitem/ivc-ml/geo/data/Prithvi_EO_V2_600M.pt
+
+# Evaluation settings
+EVAL_STRIDE=5
+EVAL_BATCH_SIZE=32

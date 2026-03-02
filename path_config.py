@@ -109,6 +109,16 @@ def get_pixels_cache_dir() -> str:
     return get_path('PIXELS_CACHE_DIR')
 
 
+def get_eval_stride() -> int:
+    """Get the sliding-window stride for evaluation (in pixels)."""
+    return int(get_path('EVAL_STRIDE', default='2'))
+
+
+def get_eval_batch_size() -> int:
+    """Get the base batch size for batched sliding-window eval (at crop_size=48)."""
+    return int(get_path('EVAL_BATCH_SIZE', default='64'))
+
+
 def get_model_weights(model_size: str) -> str:
     """
     Get the model weights file path.

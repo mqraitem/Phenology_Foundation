@@ -86,7 +86,7 @@ def main():
 		model.load_state_dict(ckpt["model_state_dict"])
 
 		if crop_size is not None:
-			out_df = eval_data_loader_crops_df(data_loader, model, device, get_masks_paper(data_loader_name), crop_size=crop_size)
+			out_df = eval_data_loader_crops_df(data_loader, model, device, get_masks_paper(data_loader_name), crop_size=crop_size, stride=path_config.get_eval_stride())
 		else:
 			out_df = eval_data_loader_df(data_loader, model, device, get_masks_paper(data_loader_name))
 

@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import os
 
 # --- Config ---
-CSV = "results/m3-6-9-12/prithvi_pretrained_multiscale_crops_conv3d_1.0_test.csv"
+CSV = "results/m3-6-9-12/prithvi_pretrained_multiscale_crops_conv3d_crop48_1.0_test.csv"
 OUT_DIR = "figures"
 TILE, SITE, YEAR = "T14TMT", "ND-3", 2019
 BANDS = ["G", "M", "S", "D"]

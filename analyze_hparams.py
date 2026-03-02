@@ -131,7 +131,7 @@ def evaluate_all_checkpoints(selected_months, cache_path):
 
 			acc, _, val_loss = eval_data_loader_crops(
 				val_dataloader, model, device, tiles_paper_masks,
-				crop_size=crop_size)
+				crop_size=crop_size, stride=path_config.get_eval_stride())
 
 			# Reset dataset
 			cycle_dataset_val.set_feed_timeloc(False)

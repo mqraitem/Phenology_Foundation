@@ -109,7 +109,7 @@ def main():
 			model.load_state_dict(torch.load(checkpoint)["model_state_dict"])
 
 			if crop_size is not None:
-				acc_dataset_val, _, _ = eval_data_loader_crops(val_dataloader, model, device, get_masks_paper("train"), crop_size=crop_size)
+				acc_dataset_val, _, _ = eval_data_loader_crops(val_dataloader, model, device, get_masks_paper("train"), crop_size=crop_size, stride=crop_size)
 			else:
 				acc_dataset_val, _, _ = eval_data_loader(val_dataloader, model, device, get_masks_paper("train"))
 

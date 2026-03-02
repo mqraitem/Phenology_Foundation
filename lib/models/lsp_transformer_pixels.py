@@ -54,6 +54,15 @@ class TemporalTransformer(nn.Module):
 
             x = x.reshape(B * H * W, T, C)      # (B*H*W, T, C)
 
+        # Dead timestep mask: True where all bands are zero  →  (N, T)
+        # Computed before projection while values are still raw zeros.
+        dead_ts_mask = (x == 0).all(dim=-1)
+        # Pixels whose every timestep is dead would produce NaN in softmax;
+        # disable masking for them (they are excluded from training and ignored
+        # at eval via GT=-1 anyway).
+        all_dead = dead_ts_mask.all(dim=-1, keepdim=True)  # (N, 1)
+        dead_ts_mask = dead_ts_mask & ~all_dead             # (N, T)
+
         # Project input and apply positional encoding
         x = self.input_proj(x)             # (N, T, d_model)
         x = self.pos_encoder(x)
@@ -62,15 +71,20 @@ class TemporalTransformer(nn.Module):
         outputs = []
 
         for i in range(0, N, chunk_size):
-            x_chunk = x[i:i + chunk_size]                          # (chunk_size, T, d_model)
-            x_chunk = self.transformer_encoder(x_chunk)           # (chunk_size, T, d_model)
-            x_chunk = x_chunk.mean(dim=1)                         # (chunk_size, d_model)
+            x_chunk = x[i:i + chunk_size]                    # (chunk, T, d_model)
+            mask_chunk = dead_ts_mask[i:i + chunk_size]      # (chunk, T)
+            x_chunk = self.transformer_encoder(x_chunk, src_key_padding_mask=mask_chunk)
+
+            # Masked mean: average only over valid (non-dead) timesteps
+            valid = (~mask_chunk).float().unsqueeze(-1)      # (chunk, T, 1)
+            x_chunk = (x_chunk * valid).sum(dim=1) / valid.sum(dim=1).clamp(min=1)
+
             x_chunk = self.dropout(x_chunk)
-            x_chunk = self.output_proj(x_chunk)                   # (chunk_size, num_classes)
+            x_chunk = self.output_proj(x_chunk)              # (chunk, num_classes)
             outputs.append(x_chunk)
 
         x = torch.cat(outputs, dim=0)  # (B*H*W, num_classes)
-       
+
         if processing_images:
             x = x.view(B, H, W, -1)        # (B, H, W, num_classes)
             #permute to (B, last, H, W)

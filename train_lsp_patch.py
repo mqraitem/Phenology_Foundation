@@ -69,7 +69,7 @@ def main():
 
 	if args.logging:
 		wandb.init(
-				project=f"phenology_crop_{args.data_percentage}",
+				project=args.wandb_project or f"phenology_crop_{args.data_percentage}",
 				group=group_name,
 				config = wandb_config,
 				name=wandb_name,

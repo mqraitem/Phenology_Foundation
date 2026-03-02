@@ -157,22 +157,18 @@ class CycleDataset(Dataset):
 		# Initialize output with zeros (preserve padding)
 		normalized = np.zeros_like(image, dtype=np.float32)
 
-		# Create mask for pixels where all bands/time steps are zero
-		# Shape: (H, W) - True where pixel should be normalized
 		valid_region = image[:, :, :vh, :vw]
-		non_zero_mask = np.any(valid_region != 0, axis=(0, 1))  # (vh, vw)
 
-		# Normalize only valid region where pixels are non-zero
-		normalized_valid = (
-			(valid_region.astype(np.float32) - means1) / (stds1 + 1e-6)
-		)
-		
-		# Apply mask: keep normalized values only where pixels are non-zero
-		# Broadcast mask from (vh, vw) to (bands, time, vh, vw)
+		# Per-timestep dead mask: True where all bands are 0 at that (timestep, pixel)
+		dead_ts_mask = (valid_region == 0).all(axis=0)  # (time, vh, vw)
+
+		normalized_valid = (valid_region.astype(np.float32) - means1) / (stds1 + 1e-6)
+
+		# Re-zero dead timesteps so downstream attention masking can detect them
 		normalized[:, :, :vh, :vw] = np.where(
-			non_zero_mask[np.newaxis, np.newaxis, :, :],
+			dead_ts_mask[np.newaxis, :, :, :],
+			0.0,
 			normalized_valid,
-			0.0
 		)
 
 		# Convert to torch tensor with batch dimension

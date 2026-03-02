@@ -72,14 +72,11 @@ def compute_or_load_means_stds(
 
 		img = np.concatenate(images, axis=1)  # shape: (num_bands, time_steps, H, W)
 
-		# Create mask for dead pixels (zeros in both time and bands dimensions)
-		# A pixel is dead if it's zero across all bands and all time steps
-		dead_pixel_mask = np.all(img == 0, axis=(0, 1))  # shape: (H, W)
+		# A pixel-timestep is dead if all bands are zero at that (pixel, timestep)
+		dead_ts_mask = np.all(img == 0, axis=0)  # (time_steps, H, W)
 
-		# Expand mask to match image shape: (num_bands, time_steps, H, W)
-		time_steps = img.shape[1]
-		expanded_mask = np.repeat(dead_pixel_mask[np.newaxis, :, :], time_steps, axis=0)  # (time_steps, H, W)
-		expanded_mask = np.repeat(expanded_mask[np.newaxis, :, :, :], num_bands, axis=0)  # (num_bands, time_steps, H, W)
+		# Expand to (num_bands, time_steps, H, W) and invert for valid mask
+		expanded_mask = np.broadcast_to(dead_ts_mask[np.newaxis], img.shape)
 
 		img_flat = img.reshape(num_bands, -1)
 		mask_flat = ~expanded_mask.reshape(num_bands, -1)
@@ -165,42 +162,20 @@ def print_trainable_parameters(model, detailed=False):
 			print(f"  {module_name}: {trainable:,} / {total:,} ({pct:.2f}% trainable)")
 
 
-def segmentation_loss_pixels(targets, preds, device, ignore_index=-1):
+def segmentation_loss_pixels(targets, preds, device, ignore_index=-1, loss_type="mse"):
 	"""
 	Compute regression loss for pixel dataset.
-	
+
 	Args:
 		targets: (B,) tensor of ground truth labels (float)
 		preds:   (B,) or (B, num_outputs) tensor of predictions
 		device:  torch device
 		ignore_index: value in targets to ignore (default -1)
+		loss_type: "mse" or "mae"
 	"""
-	criterion = nn.MSELoss(reduction="sum").to(device)
+	criterion = nn.L1Loss(reduction="sum").to(device) if loss_type == "mae" else nn.MSELoss(reduction="sum").to(device)
 
 	# valid mask = targets not equal to ignore_index
-	valid_mask = targets != ignore_index
-
-	if valid_mask.sum() > 0:
-		valid_pred = preds[valid_mask]
-		valid_target = targets[valid_mask]   # normalize like before
-		loss = criterion(valid_pred, valid_target)
-		return loss / valid_mask.sum().item()
-	else:
-		return torch.tensor(0.0, device=device)
-
-
-def segmentation_loss_pixels_mae(targets, preds, device, ignore_index=-1):
-	"""
-	Compute MAE regression loss for pixel dataset.
-
-	Args:
-		targets: (B,) tensor of ground truth labels (float)
-		preds:   (B,) or (B, num_outputs) tensor of predictions
-		device:  torch device
-		ignore_index: value in targets to ignore (default -1)
-	"""
-	criterion = nn.L1Loss(reduction="sum").to(device)
-
 	valid_mask = targets != ignore_index
 
 	if valid_mask.sum() > 0:
@@ -210,6 +185,10 @@ def segmentation_loss_pixels_mae(targets, preds, device, ignore_index=-1):
 		return loss / valid_mask.sum().item()
 	else:
 		return torch.tensor(0.0, device=device)
+
+
+def segmentation_loss_pixels_mae(targets, preds, device, ignore_index=-1):
+	return segmentation_loss_pixels(targets, preds, device, ignore_index, loss_type="mae")
 
 
 def segmentation_loss_subsampled(mask, pred, device, n_pixels=256, ignore_index=-1, loss_type="mse"):
@@ -253,34 +232,10 @@ def segmentation_loss_subsampled(mask, pred, device, n_pixels=256, ignore_index=
 	return loss / total_sampled if total_sampled > 0 else torch.tensor(0.0, device=device)
 
 
-def segmentation_loss(mask, pred, device, ignore_index=-1):
-	mask = mask.float()  # Convert mask to float for regression loss
-
-	criterion = nn.MSELoss(reduction="sum").to(device)
-
-	loss = 0
-	num_channels = pred.shape[1]  # Number of output channels
-	total_valid_pixels = 0  # Counter for valid pixels
-
-	for idx in range(num_channels):
-		valid_mask = mask[:, idx] != ignore_index
-
-		if valid_mask.sum() > 0:  # Ensure there are valid pixels to compute loss
-
-			valid_pred = pred[:, idx][valid_mask]  # Apply mask to predictions
-			valid_target = mask[:, idx][valid_mask]  # Apply mask to ground truth
-
-			loss += criterion(valid_pred, valid_target)
-			total_valid_pixels += valid_mask.sum().item()
-
-	# Normalize by total valid pixels to avoid division by zero
-	return loss / total_valid_pixels if total_valid_pixels > 0 else torch.tensor(0.0, device=device)
-
-
-def segmentation_loss_mae(mask, pred, device, ignore_index=-1):
+def segmentation_loss(mask, pred, device, ignore_index=-1, loss_type="mse"):
 	mask = mask.float()
 
-	criterion = nn.L1Loss(reduction="sum").to(device)
+	criterion = nn.L1Loss(reduction="sum").to(device) if loss_type == "mae" else nn.MSELoss(reduction="sum").to(device)
 
 	loss = 0
 	num_channels = pred.shape[1]
@@ -297,6 +252,10 @@ def segmentation_loss_mae(mask, pred, device, ignore_index=-1):
 			total_valid_pixels += valid_mask.sum().item()
 
 	return loss / total_valid_pixels if total_valid_pixels > 0 else torch.tensor(0.0, device=device)
+
+
+def segmentation_loss_mae(mask, pred, device, ignore_index=-1):
+	return segmentation_loss(mask, pred, device, ignore_index, loss_type="mae")
 
 
 def get_masks_paper(data="train", device="cuda"):
@@ -345,6 +304,18 @@ def compute_accuracy(gt_hls_tile, pred_hls_tile_avg, all_errors_hls_tile, hls_ti
 	return all_errors_hls_tile
 
 
+def _aggregate_tile_errors(all_errors_hls_tile, eval_loss, n_samples):
+	"""Aggregate per-tile errors into per-date mean MAE and epoch loss."""
+	all_errors_time = {i: [] for i in range(4)}
+	for tile in all_errors_hls_tile:
+		for i in range(4):
+			all_errors_time[i].append(all_errors_hls_tile[tile][i])
+
+	acc_dataset = {i: np.mean(all_errors_time[i]) for i in range(4)}
+	epoch_loss = eval_loss / n_samples
+	return acc_dataset, all_errors_hls_tile, epoch_loss
+
+
 def eval_data_loader(data_loader,model, device, tiles_paper_masks, loss_fn=None):
 
 	if loss_fn is None:
@@ -374,15 +345,79 @@ def eval_data_loader(data_loader,model, device, tiles_paper_masks, loss_fn=None)
 				all_errors_hls_tile[hls_tile_n] = {i:0 for i in range(4)}  # Initialize errors for each of the 4 predicted dates
 				all_errors_hls_tile = compute_accuracy(gt_hls_tile, pred_hls_tile_avg, all_errors_hls_tile, hls_tile_n, tiles_paper_masks[hls_tile_n])
 
-	all_errors_time = {i:[] for i in range(4)}
-	for tile in all_errors_hls_tile:
-		for i in range(4):
-			all_errors_time[i].append(all_errors_hls_tile[tile][i])
+	return _aggregate_tile_errors(all_errors_hls_tile, eval_loss, len(data_loader.dataset))
 
-	acc_dataset_val = {i:np.mean(all_errors_time[i]) for i in range(4)}
-	epoch_loss_val = eval_loss / len(data_loader.dataset)
 
-	return acc_dataset_val, all_errors_hls_tile, epoch_loss_val
+def _compute_sliding_positions(crop_size, stride, tile_size=330):
+	"""Compute sliding window start positions along one axis."""
+	positions = []
+	r = 0
+	while r + crop_size <= tile_size:
+		positions.append(r)
+		r += stride
+	if positions[-1] + crop_size < tile_size:
+		positions.append(tile_size - crop_size)
+	return positions
+
+
+def _auto_eval_batch_size(crop_size, base_batch_size=None):
+	"""Scale batch size inversely with crop area relative to crop_size=48."""
+	if base_batch_size is None:
+		base_batch_size = path_config.get_eval_batch_size()
+	return max(1, int(base_batch_size * (48 / crop_size) ** 2))
+
+
+def batched_sliding_window(model, image, crop_size, device, tile_size=330,
+						   stride=None, batch_size=None):
+	"""Batched sliding-window inference over a single tile.
+
+	Collects crops into batches and runs them through the model together,
+	which is much faster than one crop at a time (especially with small strides).
+	Uses fp16 autocast when running on CUDA for additional throughput.
+
+	Args:
+		model:      trained model (expects (B, C, T, cs, cs) input)
+		image:      (1, C, T, H, W) tensor (H, W >= tile_size)
+		crop_size:  spatial crop size the model expects
+		device:     torch device
+		tile_size:  valid spatial region (default 330)
+		stride:     sliding window stride (default: from EVAL_STRIDE config)
+		batch_size: crops per forward pass (default: auto-scaled from config)
+
+	Returns:
+		(4, tile_size, tile_size) tensor on device — averaged predictions
+	"""
+	if stride is None:
+		stride = path_config.get_eval_stride()
+	if batch_size is None:
+		batch_size = _auto_eval_batch_size(crop_size)
+
+	positions = _compute_sliding_positions(crop_size, stride, tile_size)
+	all_rc = [(r, c) for r in positions for c in positions]
+
+	image_330 = image[0, :, :, :tile_size, :tile_size].to(device)  # (C, T, H, W)
+	logit_sum = torch.zeros(4, tile_size, tile_size, device=device)
+	count = torch.zeros(1, tile_size, tile_size, device=device)
+
+	use_amp = (device == "cuda" or (isinstance(device, torch.device) and device.type == "cuda"))
+
+	for start in range(0, len(all_rc), batch_size):
+		batch_rc = all_rc[start:start + batch_size]
+
+		crops = torch.stack([
+			image_330[:, :, r:r+crop_size, c:c+crop_size]
+			for r, c in batch_rc
+		], dim=0)  # (N, C, T, cs, cs)
+
+		with torch.amp.autocast("cuda", enabled=use_amp):
+			preds = model(crops)  # (N, 4, cs', cs')
+		preds = preds.float()[:, :, :crop_size, :crop_size]
+
+		for i, (r, c) in enumerate(batch_rc):
+			logit_sum[:, r:r+crop_size, c:c+crop_size] += preds[i]
+			count[:, r:r+crop_size, c:c+crop_size] += 1
+
+	return logit_sum / count.clamp(min=1)
 
 
 def eval_data_loader_crops(data_loader, model, device, tiles_paper_masks,
@@ -390,8 +425,7 @@ def eval_data_loader_crops(data_loader, model, device, tiles_paper_masks,
 	"""Evaluate using sliding-window crops.
 
 	For each tile, slide a crop_size x crop_size window with the given stride.
-	Run each crop through the model, accumulate logits, and average overlapping
-	predictions. The model always sees crop_size x crop_size inputs.
+	Crops are batched together for faster inference.
 
 	Args:
 		data_loader: yields tiles with "image" (C, T, H, W), "gt_mask", "hls_tile_name"
@@ -413,16 +447,6 @@ def eval_data_loader_crops(data_loader, model, device, tiles_paper_masks,
 	eval_loss = 0.0
 	tile_size = 330
 
-	# Precompute crop positions
-	positions = []
-	r = 0
-	while r + crop_size <= tile_size:
-		positions.append(r)
-		r += stride
-	# Add edge position if last crop doesn't reach the end
-	if positions[-1] + crop_size < tile_size:
-		positions.append(tile_size - crop_size)
-
 	with torch.no_grad():
 		for _, data in tqdm(enumerate(data_loader), total=len(data_loader)):
 
@@ -431,74 +455,32 @@ def eval_data_loader_crops(data_loader, model, device, tiles_paper_masks,
 			tile_name = data["hls_tile_name"]
 			B = image.size(0)
 
-			# Work on the 330x330 valid region
-			image_330 = image[:, :, :, :tile_size, :tile_size]
+			for b in range(B):
+				predictions = batched_sliding_window(
+					model, image[b:b+1], crop_size, device,
+					tile_size=tile_size, stride=stride,
+				).unsqueeze(0)  # (1, 4, 330, 330)
 
-			# Accumulators
-			logit_sum = torch.zeros(B, 4, tile_size, tile_size, device=device)
-			count = torch.zeros(B, 1, tile_size, tile_size, device=device)
+				gt_330 = gt[b:b+1, :, :tile_size, :tile_size]
 
-			# Slide crop_size x crop_size window
-			for r in positions:
-				for c in positions:
-					crop = image_330[:, :, :, r:r+crop_size, c:c+crop_size]
-					pred_crop = model(crop)
-					pred_crop = pred_crop[:, :, :crop_size, :crop_size]
+				eval_loss += loss_fn(
+					mask=gt_330, pred=predictions, device=device
+				).item()
 
-					logit_sum[:, :, r:r+crop_size, c:c+crop_size] += pred_crop
-					count[:, :, r:r+crop_size, c:c+crop_size] += 1
-
-			# Average overlapping predictions
-			predictions = logit_sum / count.clamp(min=1)
-
-			gt_330 = gt[:, :, :tile_size, :tile_size]
-
-			eval_loss += loss_fn(
-				mask=gt_330, pred=predictions, device=device
-			).item() * gt_330.size(0)
-
-			for gt_tile, pred_tile, name in zip(gt_330, predictions, tile_name):
+				name = tile_name[b]
 				assert name not in all_errors_hls_tile, f"Tile {name} already exists"
 				all_errors_hls_tile[name] = {i: 0 for i in range(4)}
 				all_errors_hls_tile = compute_accuracy(
-					gt_tile, pred_tile, all_errors_hls_tile, name,
+					gt_330[0], predictions[0], all_errors_hls_tile, name,
 					tiles_paper_masks[name],
 				)
 
-	all_errors_time = {i: [] for i in range(4)}
-	for tile in all_errors_hls_tile:
-		for i in range(4):
-			all_errors_time[i].append(all_errors_hls_tile[tile][i])
-
-	acc_dataset = {i: np.mean(all_errors_time[i]) for i in range(4)}
-	epoch_loss = eval_loss / len(data_loader.dataset)
-
-	return acc_dataset, all_errors_hls_tile, epoch_loss
+	return _aggregate_tile_errors(all_errors_hls_tile, eval_loss, len(data_loader.dataset))
 
 
-def eval_data_loader_crops_df(data_loader, model, device, tiles_paper_masks,
-							  crop_size=48, stride=None):
-	"""Evaluate using sliding-window crops and return per-pixel DataFrame.
-
-	Same sliding-window logic as eval_data_loader_crops, but outputs a DataFrame
-	with per-pixel predictions (matching eval_data_loader_df output format).
-	"""
-	if stride is None:
-		stride = crop_size
-
-	model.eval()
-	tile_size = 330
-
-	# Precompute crop positions
-	positions = []
-	r = 0
-	while r + crop_size <= tile_size:
-		positions.append(r)
-		r += stride
-	if positions[-1] + crop_size < tile_size:
-		positions.append(tile_size - crop_size)
-
-	data_df = {
+def _make_empty_result_df():
+	"""Create an empty dict with all columns for per-pixel result DataFrames."""
+	return {
 		"index":[], "years":[], "HLStile":[], "SiteID": [],
 		"row":[], "col":[], "version":[],
 		"G_pred_DOY":[], "M_pred_DOY":[], "S_pred_DOY":[], "D_pred_DOY":[],
@@ -506,7 +488,58 @@ def eval_data_loader_crops_df(data_loader, model, device, tiles_paper_masks,
 		"n_missing_ts":[], "lat":[], "lon":[],
 	}
 
-	# Tile centroid lat/lon lookup from the dataset
+
+def _append_tile_pixels(data_df, pred_tile, gt_tile, tile_name, paper_mask, sample_img, all_locations):
+	"""Append per-pixel predictions for one tile to the result dict.
+
+	Args:
+		data_df:      dict of lists (from _make_empty_result_df)
+		pred_tile:    (4, H, W) prediction tensor
+		gt_tile:      (4, H, W) ground truth tensor
+		tile_name:    str like "2020_CO-2_T13TDE"
+		paper_mask:   (H, W) boolean tensor of valid pixels
+		sample_img:   (C, T, H, W) raw unprocessed image array
+		all_locations: dict mapping tile_name -> (lat, lon)
+	"""
+	year, siteid, hlstile = tile_name.split("_")
+	row, col = np.where(paper_mask.cpu().numpy())
+
+	loc = all_locations[tile_name]
+	lat, lon = loc[0], loc[1]
+
+	for r, c in zip(row, col):
+		pixel_ts = sample_img[:, :, r, c]
+		n_missing = int((pixel_ts == 0).all(axis=0).sum())
+
+		data_df["index"].append(len(data_df["index"]))
+		data_df["years"].append(year)
+		data_df["HLStile"].append(hlstile)
+		data_df["SiteID"].append(siteid)
+		data_df["row"].append(r)
+		data_df["col"].append(c)
+		data_df["version"].append("v1")
+		data_df["G_pred_DOY"].append(pred_tile[0, r, c].item()*547)
+		data_df["M_pred_DOY"].append(pred_tile[1, r, c].item()*547)
+		data_df["S_pred_DOY"].append(pred_tile[2, r, c].item()*547)
+		data_df["D_pred_DOY"].append(pred_tile[3, r, c].item()*547)
+		data_df["G_truth_DOY"].append(gt_tile[0, r, c].item()*547)
+		data_df["M_truth_DOY"].append(gt_tile[1, r, c].item()*547)
+		data_df["S_truth_DOY"].append(gt_tile[2, r, c].item()*547)
+		data_df["D_truth_DOY"].append(gt_tile[3, r, c].item()*547)
+		data_df["n_missing_ts"].append(n_missing)
+		data_df["lat"].append(lat)
+		data_df["lon"].append(lon)
+
+
+def eval_data_loader_crops_df(data_loader, model, device, tiles_paper_masks,
+							  crop_size=48, stride=None):
+	"""Evaluate using sliding-window crops and return per-pixel DataFrame."""
+	if stride is None:
+		stride = crop_size
+
+	model.eval()
+	tile_size = 330
+	data_df = _make_empty_result_df()
 	all_locations = data_loader.dataset.all_locations
 
 	with torch.no_grad():
@@ -515,153 +548,58 @@ def eval_data_loader_crops_df(data_loader, model, device, tiles_paper_masks,
 			ground_truth = data["gt_mask"].to(device)
 			tile_name = data["hls_tile_name"]
 
-			image_330 = image[:, :, :, :tile_size, :tile_size]
+			img_unproc = data["image_unprocessed"].numpy() \
+				if hasattr(data["image_unprocessed"], "numpy") \
+				else np.array(data["image_unprocessed"])
 
-			logit_sum = torch.zeros(image.size(0), 4, tile_size, tile_size, device=device)
-			count = torch.zeros(image.size(0), 1, tile_size, tile_size, device=device)
+			B = image.size(0)
+			for b_idx in range(B):
+				pred_tile = batched_sliding_window(
+					model, image[b_idx:b_idx+1], crop_size, device,
+					tile_size=tile_size, stride=stride,
+				)  # (4, 330, 330)
 
-			for ri in positions:
-				for ci in positions:
-					crop = image_330[:, :, :, ri:ri+crop_size, ci:ci+crop_size]
-					pred_crop = model(crop)
-					pred_crop = pred_crop[:, :, :crop_size, :crop_size]
-					logit_sum[:, :, ri:ri+crop_size, ci:ci+crop_size] += pred_crop
-					count[:, :, ri:ri+crop_size, ci:ci+crop_size] += 1
+				_append_tile_pixels(
+					data_df, pred_tile, ground_truth[b_idx],
+					tile_name[b_idx], tiles_paper_masks[tile_name[b_idx]],
+					img_unproc[b_idx], all_locations,
+				)
 
-			predictions = logit_sum / count.clamp(min=1)
+	return pd.DataFrame(data_df)
+
+
+def eval_data_loader_df(data_loader, model, device, tiles_paper_masks):
+
+	model.eval()
+	data_df = _make_empty_result_df()
+	all_locations = data_loader.dataset.all_locations
+
+	eval_loss = 0.0
+	with torch.no_grad():
+		for _, data in tqdm(enumerate(data_loader), total=len(data_loader)):
+
+			input = data["image"]
+			ground_truth = data["gt_mask"].to(device)
+
+			predictions = model(input)
+			predictions = predictions[:, :, :330, :330]
+
+			eval_loss += segmentation_loss(mask=data["gt_mask"].to(device), pred=predictions, device=device).item() * ground_truth.size(0)
 
 			img_unproc = data["image_unprocessed"].numpy() \
 				if hasattr(data["image_unprocessed"], "numpy") \
 				else np.array(data["image_unprocessed"])
 
-			for b_idx, (gt_tile, pred_tile, name) in enumerate(
-					zip(ground_truth, predictions, tile_name)):
+			for b_idx, (gt_tile, pred_tile, tile_name) in enumerate(
+					zip(ground_truth, predictions, data["hls_tile_name"])):
 
-				mask_tilen = tiles_paper_masks[name]
-				year, siteid, hlstile = name.split("_")
-				row, col = np.where(mask_tilen.cpu().numpy())
+				_append_tile_pixels(
+					data_df, pred_tile, gt_tile,
+					tile_name, tiles_paper_masks[tile_name],
+					img_unproc[b_idx], all_locations,
+				)
 
-				loc = all_locations[name]
-				lat, lon = loc[0], loc[1]
-
-				sample_img = img_unproc[b_idx]
-
-				for r, c in zip(row, col):
-					pixel_ts = sample_img[:, :, r, c]
-					n_missing = int((pixel_ts == 0).all(axis=0).sum())
-
-					data_df["index"].append(len(data_df["index"]))
-					data_df["years"].append(year)
-					data_df["HLStile"].append(hlstile)
-					data_df["SiteID"].append(siteid)
-					data_df["row"].append(r)
-					data_df["col"].append(c)
-					data_df["version"].append("v1")
-					data_df["G_pred_DOY"].append(pred_tile[0, r, c].item()*547)
-					data_df["M_pred_DOY"].append(pred_tile[1, r, c].item()*547)
-					data_df["S_pred_DOY"].append(pred_tile[2, r, c].item()*547)
-					data_df["D_pred_DOY"].append(pred_tile[3, r, c].item()*547)
-					data_df["G_truth_DOY"].append(gt_tile[0, r, c].item()*547)
-					data_df["M_truth_DOY"].append(gt_tile[1, r, c].item()*547)
-					data_df["S_truth_DOY"].append(gt_tile[2, r, c].item()*547)
-					data_df["D_truth_DOY"].append(gt_tile[3, r, c].item()*547)
-					data_df["n_missing_ts"].append(n_missing)
-					data_df["lat"].append(lat)
-					data_df["lon"].append(lon)
-
-	data_df = pd.DataFrame(data_df)
-	return data_df
-
-
-def eval_data_loader_df(data_loader,model, device, tiles_paper_masks):
-
-	model.eval()
-
-	#G_pred_DOY  M_pred_DOY  S_pred_DOY  D_pred_DOY
-	data_df = {
-		"index":[],
-		"years":[],
-		"HLStile":[],
-		"SiteID": [],
-		"row":[],
-		"col":[],
-		"version":[],
-		"G_pred_DOY":[],
-		"M_pred_DOY":[],
-		"S_pred_DOY":[],
-		"D_pred_DOY":[],
-		"G_truth_DOY":[],
-		"M_truth_DOY":[],
-		"S_truth_DOY":[],
-		"D_truth_DOY":[],
-		"n_missing_ts":[],   # number of all-zero timesteps for this pixel (0–12)
-		"lat":[],
-		"lon":[],
-	}
-
-	# Tile centroid lat/lon lookup from the dataset
-	all_locations = data_loader.dataset.all_locations
-
-	eval_loss = 0.0
-	with torch.no_grad():
-		for _,data in tqdm(enumerate(data_loader), total=len(data_loader)):
-
-			input = data["image"]
-			ground_truth = data["gt_mask"].to(device)
-			hls_tile_name = data["hls_tile_name"]
-
-			predictions=model(input)
-
-			predictions = predictions[:, :, :330, :330]
-			pred_hls_tile_all = predictions
-
-			eval_loss += segmentation_loss(mask=data["gt_mask"].to(device),pred=predictions,device=device).item() * ground_truth.size(0)  # Multiply by batch size
-
-			# image_unprocessed: (B, C, T, H, W) raw reflectance — zeros = missing
-			img_unproc = data["image_unprocessed"].numpy() \
-				if hasattr(data["image_unprocessed"], "numpy") \
-				else np.array(data["image_unprocessed"])   # (B, C, T, H, W)
-
-			for b_idx, (gt_hls_tile, pred_hls_tile_avg, hls_tile_n) in enumerate(
-					zip(ground_truth, pred_hls_tile_all, data["hls_tile_name"])):
-
-				mask_tilen = tiles_paper_masks[hls_tile_n]
-				year, siteid, hlstile = hls_tile_n.split("_")
-				#get the row and col from the mask
-				row, col = np.where(mask_tilen.cpu().numpy())
-
-				loc = all_locations[hls_tile_n]
-				lat, lon = loc[0], loc[1]
-
-				# (C, T, H, W) for this sample
-				sample_img = img_unproc[b_idx]
-
-				for r, c in zip(row, col):
-					# count timesteps where all 6 bands are zero at this pixel
-					pixel_ts  = sample_img[:, :, r, c]          # (C, T)
-					n_missing = int((pixel_ts == 0).all(axis=0).sum())
-
-					data_df["index"].append(len(data_df["index"]))
-					data_df["years"].append(year)
-					data_df["HLStile"].append(hlstile)
-					data_df["SiteID"].append(siteid)
-					data_df["row"].append(r)
-					data_df["col"].append(c)
-					data_df["version"].append("v1")
-					data_df["G_pred_DOY"].append(pred_hls_tile_avg[0, r, c].item()*547)
-					data_df["M_pred_DOY"].append(pred_hls_tile_avg[1, r, c].item()*547)
-					data_df["S_pred_DOY"].append(pred_hls_tile_avg[2, r, c].item()*547)
-					data_df["D_pred_DOY"].append(pred_hls_tile_avg[3, r, c].item()*547)
-					data_df["G_truth_DOY"].append(gt_hls_tile[0, r, c].item()*547)
-					data_df["M_truth_DOY"].append(gt_hls_tile[1, r, c].item()*547)
-					data_df["S_truth_DOY"].append(gt_hls_tile[2, r, c].item()*547)
-					data_df["D_truth_DOY"].append(gt_hls_tile[3, r, c].item()*547)
-					data_df["n_missing_ts"].append(n_missing)
-					data_df["lat"].append(lat)
-					data_df["lon"].append(lon)
-
-	data_df = pd.DataFrame(data_df)
-	return data_df	
+	return pd.DataFrame(data_df)
 
 
 def str2bool(v):

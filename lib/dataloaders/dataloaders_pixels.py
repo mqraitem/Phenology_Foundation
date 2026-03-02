@@ -148,7 +148,9 @@ class CycleDatasetPixels(Dataset):
 			# normalize only valid pixels
 			means1 = self.means.reshape(1, 1, -1)  # (1, 1, C) for broadcasting with (N, T, C)
 			stds1 = self.stds.reshape(1, 1, -1)
+			dead_ts_mask = (img_valid == 0).all(axis=2)  # (N, T) - True where all bands are 0
 			img_valid = (img_valid - means1) / (stds1 + 1e-6)
+			img_valid = np.where(dead_ts_mask[:, :, np.newaxis], 0.0, img_valid)
 
 			# build meta
 			h_coords, w_coords = np.meshgrid(np.arange(H), np.arange(W), indexing="ij")

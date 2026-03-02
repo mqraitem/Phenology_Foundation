@@ -426,6 +426,45 @@ class PrithviViT(nn.Module):
 
         return x, mask, ids_restore
 
+    def _dead_patch_attn_bias(self, x_raw: torch.Tensor) -> torch.Tensor:
+        """Additive attention bias that suppresses dead (all-zero) patch tokens.
+
+        A patch is dead if every pixel in its spatial window is zero across all
+        input bands at that timestep.  Dead patches are masked in the key
+        dimension so no other token can attend to them, while the CLS token
+        column is always left unmasked (ensuring no row is all -inf).
+
+        Args:
+            x_raw: (B, C, T, H, W) raw input before patch embedding.
+        Returns:
+            (B, 1, 1, 1+T*Hp*Wp) float — 0 for valid tokens, -inf for dead.
+        """
+        B = x_raw.shape[0]
+        pt, ph, pw = self.patch_embed.patch_size
+
+        # Per-pixel dead flag: True where all C bands are 0 → (B, T, H, W)
+        dead_pixels = (x_raw == 0).all(dim=1).float()
+
+        # Pool to patch grid: dead if ALL pixels in the window are 0
+        dead_patches = nn.functional.avg_pool3d(
+            dead_pixels.unsqueeze(1),        # (B, 1, T, H, W)
+            kernel_size=(pt, ph, pw),
+            stride=(pt, ph, pw),
+        ).squeeze(1).flatten(1)              # (B, T*Hp*Wp)
+
+        dead_patch_mask = dead_patches == 1.0  # (B, T*Hp*Wp)
+
+        # Prepend False for the CLS token (never masked)
+        cls_col = torch.zeros(B, 1, dtype=torch.bool, device=x_raw.device)
+        dead_mask = torch.cat([cls_col, dead_patch_mask], dim=1)  # (B, 1+T*Hp*Wp)
+
+        # Build additive bias: 0 for valid, -inf for dead → (B, 1, 1, 1+T*Hp*Wp)
+        attn_bias = torch.zeros(
+            B, 1, 1, dead_mask.shape[1], dtype=x_raw.dtype, device=x_raw.device
+        )
+        attn_bias.masked_fill_(dead_mask[:, None, None, :], float('-inf'))
+        return attn_bias
+
     def forward_features(
         self,
         x: torch.Tensor,
@@ -435,6 +474,7 @@ class PrithviViT(nn.Module):
         if len(x.shape) == 4 and self.patch_embed.input_size[0] == 1:
             # add time dim
             x = x.unsqueeze(2)
+        x_raw = x  # keep raw input for dead-patch detection
         sample_shape = x.shape[-3:]
 
         # embed patches
@@ -457,9 +497,12 @@ class PrithviViT(nn.Module):
         cls_tokens = cls_token.expand(x.shape[0], -1, -1)
         x = torch.cat((cls_tokens, x), dim=1)
 
+        # Dead-patch attention bias: suppresses all-zero patch tokens
+        attn_bias = self._dead_patch_attn_bias(x_raw)
+
         # apply Transformer blocks
         for block in self.blocks:
-            x = block(x)
+            x = block(x, attn_mask=attn_bias)
 
         x = self.norm(x)
         return x
@@ -490,6 +533,7 @@ class PrithviViT(nn.Module):
 
         if len(x.shape) == 4 and self.patch_embed.input_size[0] == 1:
             x = x.unsqueeze(2)
+        x_raw = x  # keep raw input for dead-patch detection
         sample_shape = x.shape[-3:]
 
         x = self.patch_embed(x)
@@ -509,9 +553,12 @@ class PrithviViT(nn.Module):
         cls_tokens = cls_token.expand(x.shape[0], -1, -1)
         x = torch.cat((cls_tokens, x), dim=1)
 
+        # Dead-patch attention bias: suppresses all-zero patch tokens
+        attn_bias = self._dead_patch_attn_bias(x_raw)
+
         features = []
         for i, block in enumerate(self.blocks):
-            x = block(x)
+            x = block(x, attn_mask=attn_bias)
             if i in feature_set:
                 features.append(x)
 
