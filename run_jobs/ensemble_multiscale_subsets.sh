@@ -2,7 +2,7 @@
 # Progressively ensemble multiscale crop-size models: 32+48, then +96, +144, +224.
 set -e
 
-SELECTED_MONTHS="3 6 9 12"
+SELECTED_MONTHS="3 4 5 6 7 8 9 10"
 
 CROP32="prithvi_pretrained_multiscale_crops_conv3d_crop32_1.0"
 CROP48="prithvi_pretrained_multiscale_crops_conv3d_crop48_1.0"

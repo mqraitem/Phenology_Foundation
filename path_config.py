@@ -100,6 +100,10 @@ def get_data_geojson() -> str:
     """Get the geotiff extents geojson file path."""
     return get_path('DATA_GEOJSON')
 
+def get_data_s2_composites() -> str:
+    """Get the S2 composites data directory."""
+    return get_path('DATA_S2_COMPOSITES')
+
 def get_checkpoint_root() -> str:
     """Get the checkpoint root directory."""
     return get_path('CHECKPOINT_ROOT')

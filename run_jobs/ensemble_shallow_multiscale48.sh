@@ -3,7 +3,7 @@
 # Outputs: results/m{MONTHS}/ensemble_multiscale_crop48_shallow_transformer_{val,test}.csv
 set -e
 
-SELECTED_MONTHS="${SELECTED_MONTHS:-3 6 9 12}"
+SELECTED_MONTHS="3 4 5 6 7 8 9 10"
 
 MULTISCALE48="prithvi_pretrained_multiscale_crops_conv3d_crop48_1.0"
 SHALLOW="shallow_transformer_pixels_1.0"

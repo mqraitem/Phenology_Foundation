@@ -18,7 +18,7 @@ import yaml
 
 import wandb
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 import path_config
 
@@ -116,7 +116,7 @@ def main():
 	else:
 		optimizer = AdamW(model.parameters(), lr=args.learning_rate, weight_decay=1e-4)
 	print(f"Using optimizer: {args.optimizer}")
-	scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.9, patience=5, verbose=True)
+	scheduler = CosineAnnealingLR(optimizer, T_max=args.n_epochs, eta_min=1e-7)
 
 	train_loss_fn = segmentation_loss_pixels_mae if args.loss == "mae" else segmentation_loss_pixels
 	eval_loss_fn = segmentation_loss_mae if args.loss == "mae" else segmentation_loss
@@ -182,7 +182,7 @@ def main():
 		print("="*100)
 
 
-		scheduler.step(epoch_loss_val)
+		scheduler.step()
 		acc_dataset_val_mean = np.mean(list(acc_dataset_val.values()))
 
 		if acc_dataset_val_mean<best_acc_val:

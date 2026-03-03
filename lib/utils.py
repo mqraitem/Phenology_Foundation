@@ -348,6 +348,38 @@ def eval_data_loader(data_loader,model, device, tiles_paper_masks, loss_fn=None)
 	return _aggregate_tile_errors(all_errors_hls_tile, eval_loss, len(data_loader.dataset))
 
 
+def eval_data_loader_presto(data_loader, model, device, tiles_paper_masks, month=None, loss_fn=None):
+
+	if loss_fn is None:
+		loss_fn = segmentation_loss
+
+	model.eval()
+
+	all_errors_hls_tile = {}
+
+	eval_loss = 0.0
+	with torch.no_grad():
+		for _, data in tqdm(enumerate(data_loader), total=len(data_loader)):
+
+			input = data["image"]
+			ground_truth = data["gt_mask"].to(device)
+			latlons = data["latlons"].to(device)
+			predictions = model(input, processing_images=True, latlons=latlons, month=month)
+
+			predictions = predictions[:, :, :330, :330]
+			eval_loss += loss_fn(mask=data["gt_mask"].to(device), pred=predictions, device=device).item() * ground_truth.size(0)
+
+			pred_hls_tile_all = predictions
+
+			for gt_hls_tile, pred_hls_tile_avg, hls_tile_n in zip(ground_truth, pred_hls_tile_all, data["hls_tile_name"]):
+
+				assert hls_tile_n not in all_errors_hls_tile, f"Tile {hls_tile_n} already exists in all_errors_hls_tile"
+				all_errors_hls_tile[hls_tile_n] = {i: 0 for i in range(4)}
+				all_errors_hls_tile = compute_accuracy(gt_hls_tile, pred_hls_tile_avg, all_errors_hls_tile, hls_tile_n, tiles_paper_masks[hls_tile_n])
+
+	return _aggregate_tile_errors(all_errors_hls_tile, eval_loss, len(data_loader.dataset))
+
+
 def _compute_sliding_positions(crop_size, stride, tile_size=330):
 	"""Compute sliding window start positions along one axis."""
 	positions = []
@@ -845,6 +877,13 @@ def build_model(group, params, n_timesteps):
 		)
 		return model, feed_timeloc, crop_size
 
+	# --- Presto ---
+	if "presto" in group:
+		from lib.models.presto_phenology import PrestoPhenologyModel
+		freeze = parse_param(params, "freeze", default=False, cast=str2bool)
+		model = PrestoPhenologyModel(num_classes=4, freeze_encoder=freeze)
+		return model, False, None
+
 	# --- Shallow transformer (pixels) ---
 	if "shallow_transformer_pixels" in group:
 		from lib.models.lsp_transformer_pixels import TemporalTransformer
@@ -912,6 +951,112 @@ def build_model(group, params, n_timesteps):
 		return model, feed_timeloc, crop_size
 
 	raise ValueError(f"Unknown group: {group}")
+
+
+def get_data_paths_s2(mode, data_percentage=1.0, selected_months=None):
+
+	if selected_months is None:
+		selected_months = list(range(1, 13))
+
+	data_dir_name = f"{data_percentage}_s2_m{months_to_str(selected_months)}"
+	checkpoint_data = f"{path_config.get_data_paths_dir()}/{data_dir_name}/"
+
+	if os.path.exists(f'{checkpoint_data}/data_pths_{mode}.pkl'):
+		with open(f'{checkpoint_data}/data_pths_{mode}.pkl', 'rb') as f:
+			data_dir = pickle.load(f)
+
+		return data_dir
+
+	s2_path = path_config.get_data_s2_composites()
+	lsp_path = path_config.get_data_lsp_ancillary()
+
+	s2_tiles = [x for x in os.listdir(s2_path) if x.endswith('.tif')]
+	lsp_tiles = []
+	lsp_tiles.extend([x for x in os.listdir(f"{lsp_path}/A2019") if x.endswith('.tif')])
+	lsp_tiles.extend([x for x in os.listdir(f"{lsp_path}/A2020") if x.endswith('.tif')])
+
+	# S2 filename: S2_composite_2019-01-01_AZ-5_T12SVE.tif -> AZ-5_T12SVE
+	title_s2 = ['_'.join(x.split('_')[3:5]).split(".")[0] for x in s2_tiles]
+	title_s2 = set(title_s2)
+
+	title_hls_lsp = ["_".join(x.split('_')[3:5]) for x in lsp_tiles]
+	title_hls_lsp = set(title_hls_lsp)
+
+	s2_tiles_time = []
+	lsp_tiles_time = []
+	s2_tiles_name = []
+
+	for year in ["2019", "2020"]:
+		past_months = selected_months
+		timesteps = [f"{year}-{str(x).zfill(2)}" for x in past_months]
+
+		for s2_tile in tqdm(title_s2):
+			s2_tile_location = s2_tile.split("_")[0]
+			s2_tile_name = s2_tile.split("_")[1]
+			temp_ordered = []
+
+			for timestep in timesteps:
+				temp_ordered.append(f"{s2_path}/S2_composite_{timestep}-01_{s2_tile_location}_{s2_tile_name}.tif")
+
+			lsp_filename = f"HLS_PhenoCam_A{year}_{s2_tile_location}_{s2_tile_name}_LSP_Date.tif"
+			if lsp_filename not in lsp_tiles:
+				continue  # skip tiles without GT
+			temp_lsp = f"{lsp_path}/A{year}/{lsp_filename}"
+
+			s2_tiles_time.append(temp_ordered)
+			lsp_tiles_time.append(temp_lsp)
+			s2_tiles_name.append(f"{year}_{s2_tile}")
+
+	#open training file
+	with open(f"{lsp_path}/HP-LSP_train_ids.csv", 'r') as f:
+		train_ids = f.readlines()[0].replace("'", "").split(",")
+		train_ids = [x.strip() for x in train_ids]
+
+	with open(f"{lsp_path}/HP-LSP_test_ids.csv", 'r') as f:
+		test_ids = f.readlines()[0].replace("'", "").split(",")
+		test_ids = [x.strip() for x in test_ids]
+
+	hls_tiles_val = [
+		"2019_ME-1_T19TEL",
+		"2019_FL-3_T17RML",
+		"2020_WI-2_T15TYL",
+		"2019_AZ-5_T12SVE",
+		"2020_CO-2_T13TDE",
+		"2020_OR-1_T10TEQ",
+		"2019_MD-1_T18SUJ",
+		"2020_ND-1_T14TLS"
+	]
+
+	s2_tiles_train = [x for x in s2_tiles_name if x.split("_")[1] in train_ids]
+	s2_tiles_train = [x for x in s2_tiles_train if x not in hls_tiles_val]
+
+	# Apply data_percentage globally to all training data
+	num_to_keep = int(len(s2_tiles_train) * data_percentage)
+	s2_tiles_train = s2_tiles_train[:num_to_keep]
+	s2_tiles_test = [x for x in s2_tiles_name if x.split("_")[1] in test_ids]
+	data_dir_train = [(x, y, z) for (x,y,z) in zip(s2_tiles_time, lsp_tiles_time, s2_tiles_name) if z in s2_tiles_train]
+
+	data_dir_val = [(x, y, z) for (x,y,z) in zip(s2_tiles_time, lsp_tiles_time, s2_tiles_name) if z in hls_tiles_val]
+	data_dir_test = [(x, y, z) for (x,y,z) in zip(s2_tiles_time, lsp_tiles_time, s2_tiles_name) if z in s2_tiles_test]
+
+	os.makedirs(checkpoint_data, exist_ok=True)
+	with open(f'{checkpoint_data}/data_pths_training.pkl', 'wb') as f:
+		pickle.dump(data_dir_train, f)
+
+	with open(f'{checkpoint_data}/data_pths_validation.pkl', 'wb') as f:
+		pickle.dump(data_dir_val, f)
+
+	with open(f'{checkpoint_data}/data_pths_testing.pkl', 'wb') as f:
+		pickle.dump(data_dir_test, f)
+
+	if mode == 'training':
+		return data_dir_train
+	elif mode == 'validation':
+		return data_dir_val
+	elif mode == "testing":
+		return data_dir_test
+	else:
+		raise ValueError(f"Unknown mode: {mode}. Expected 'training', 'validation', or 'testing'.")
 
 
 def get_ndvi_data_paths(mode, data_percentage=1.0, selected_months=None):

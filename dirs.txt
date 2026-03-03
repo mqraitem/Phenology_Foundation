@@ -6,6 +6,7 @@
 DATA_HLS_COMPOSITES=/projectnb/hlsfm/applications/lsp/outputs/HLS_composites_HP-LSP
 DATA_LSP_ANCILLARY=/projectnb/hlsfm/applications/lsp/ancillary/HP_LSP
 DATA_GEOJSON=/projectnb/hlsfm/applications/lsp/ancillary/HP_LSP/geotiff_extents.geojson
+DATA_S2_COMPOSITES=/projectnb/hlsfm/applications/lsp/outputs/S2_composites_HP-LSP
 
 # Cache and output directories
 MEAN_STDS_DIR=data/mean_stds
